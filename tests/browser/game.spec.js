@@ -11,7 +11,7 @@ async function createSingle(page, mode = 'initial', scene = 'home', challenge = 
   await expect(action(page, 'draw')).toBeVisible();
 }
 async function score(page, rating) {
-  await page.waitForTimeout(470);
+  await expect(action(page, 'draw')).toBeEnabled();
   await action(page, 'draw').click();
   await page.locator(`[data-rating="${rating}"]`).click();
 }

@@ -68,7 +68,7 @@ function gameView() {
   return `<section class="page-title game-title"><div><div class="eyebrow">ONE LITTLE STEP AT A TIME</div><h1>${scene.name}</h1><p>不着急，每个拼音都有自己的节奏。</p></div><div class="actions">${button('☁ 休息一下', 'pause', 'soft')}</div></section>
   <div class="game-layout"><section class="game-board"><div class="adventure-frame"><div class="adventure-heading"><strong>今天的冒险地图</strong><small>${scene.label}</small></div><span class="scene-badge">${game.config.order === 'balanced' ? '均衡随机' : '普通随机'}</span>${scenery(scene.id, game)}<div class="progress-row"><span>已到达 <strong>${doneCount(game)} / ${game.config.selected.length}</strong></span><div class="progress-track"><div class="progress-fill" style="width:${doneCount(game) / game.config.selected.length * 100}%"></div></div><span>路程 ${game.config.distance} 格</span></div></div><details class="position-list"><summary>看看每个拼音走到哪里了</summary><div class="position-items">${game.config.selected.map(id => `<span class="position-item ${game.current === id ? 'current' : ''}">${esc(id)}<small>${game.positions[id] === game.config.distance ? '已到达 ✓' : `第 ${game.positions[id]} 格`}</small></span>`).join('')}</div></details><div class="game-tools">${button('↶ 撤销上一步', 'undo', 'text small', game.undo ? '' : 'disabled')}${button('查看玩法', 'rules', 'text small')}${game.challenge ? button('关闭后退挑战', 'disable-challenge', 'text small') : ''}</div></section>
   <section class="panel reading-card"><div class="eyebrow">${reading ? 'YOUR LITTLE PINYIN FRIEND' : 'READY FOR THE NEXT FRIEND?'}</div>${!reading && game.feedback ? `<div class="feedback" role="status">${esc(game.feedback)}</div>` : ''}<h2>${reading ? '和这位小伙伴打个招呼吧' : game.events.length ? '下一位朋友，会是谁呢？' : '拼音朋友们在等你出发'}</h2><div class="pinyin-card ${reading ? '' : 'ready'}">${reading ? esc(entry.text) : mascot(game.config.character)}</div>
-  ${reading ? `<p class="lead">${game.config.mode === 'tone' ? '留意声调，慢慢读出来。' : '看清拼音，大声读一读。'}</p>${game.config.mode === 'syllable' || game.config.mode === 'custom' && entry.parts ? `<details class="hint"><summary>看看拼读结构</summary><p style="font-family:Arial;font-size:24px;padding:12px">${esc(entry.parts || entry.text)}</p></details>` : ''}<div class="child-actions">${button('↻ 我再试一次', 'retry', 'text')}${button('♡ 请帮帮我', 'help', 'text')}</div><div class="parent-label"><span>陪练大人来记录</span><button data-action="rules">怎么判断？</button></div><div class="rating-grid">${RATINGS.map(r => `<button class="rating" data-action="grade" data-rating="${r.id}"><span class="rating-icon" aria-hidden="true">${r.icon}</span><span><strong>${r.title}</strong><small>${r.id === 'pending' ? game.challenge ? '后退 1 格' : '原地休息' : `前进 ${r.step} 格`}</small></span></button>`).join('')}</div>` : `${button('✦ 抽一个拼音', 'draw', 'primary wide')}<p class="hint">点击抽取，读完后由大人记录表现。<br>自己改对了，也能前进两格。</p>`}
+  ${reading ? `<p class="lead">${game.config.mode === 'tone' ? '留意声调，慢慢读出来。' : '看清拼音，大声读一读。'}</p>${game.config.mode === 'syllable' || game.config.mode === 'custom' && entry.parts ? `<details class="hint"><summary>看看拼读结构</summary><p style="font-family:Arial;font-size:24px;padding:12px">${esc(entry.parts || entry.text)}</p></details>` : ''}<div class="child-actions">${button('↻ 我再试一次', 'retry', 'text')}${button('♡ 请帮帮我', 'help', 'text')}</div><div class="parent-label"><span>陪练大人来记录</span><button data-action="rules">怎么判断？</button></div><div class="rating-grid">${RATINGS.map(r => `<button class="rating" data-action="grade" data-rating="${r.id}"><span class="rating-icon" aria-hidden="true">${r.icon}</span><span><strong>${r.title}</strong><small>${r.id === 'pending' ? game.challenge ? '后退 1 格' : '原地休息' : `前进 ${r.step} 格`}</small></span></button>`).join('')}</div>` : `${button('✦ 抽一个拼音', 'draw', 'primary wide', performance.now() < busyUntil ? 'disabled' : '')}<p class="hint">点击抽取，读完后由大人记录表现。<br>自己改对了，也能前进两格。</p>`}
   <p class="hint">${game.challenge ? '已开启后退挑战 · 随时可以关闭' : '读错也没关系，已有进度会留下来。'}</p></section></div>`;
 }
 function pauseView() {
@@ -168,14 +168,18 @@ async function act(action, el) {
   }
   if (action === 'confirm-start') return startGame();
   if (action === 'draw') {
-    if (Date.now() < busyUntil) return;
+    if (performance.now() < busyUntil) return;
     put(draw(current())); render(); announce(`抽到拼音 ${current().current}，请慢慢读。`);
     document.querySelector('[data-action="retry"]')?.focus({ preventScroll: true }); return;
   }
   if (action === 'grade') {
-    if (Date.now() < busyUntil || current()?.phase !== 'reading') return;
-    busyUntil = Date.now() + 450;
+    if (performance.now() < busyUntil || current()?.phase !== 'reading') return;
+    busyUntil = performance.now() + 450;
     put(grade(current(), el.dataset.rating)); render(); announce(current().feedback);
+    setTimeout(() => {
+      const next = document.querySelector('[data-action="draw"]');
+      if (next && performance.now() >= busyUntil) { next.disabled = false; if (page === 'game' && document.activeElement === document.body) next.focus({ preventScroll: true }); }
+    }, 470);
     if (current().status === 'complete') document.querySelector('[data-action="again"]')?.focus({ preventScroll: true });
     else document.querySelector('[data-action="draw"]')?.focus({ preventScroll: true });
     return;
