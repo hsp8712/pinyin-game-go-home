@@ -11,29 +11,33 @@ export function createGame(config, now = Date.now()) {
   if (selected.length < 1 || selected.length > 20 || selected.some(id => !ITEM_MAP[id])) throw new Error('请选择 1～20 个题库中的拼音');
   if (!Number.isInteger(config.distance) || config.distance < 3 || config.distance > 10) throw new Error('路程应为 3～10 格');
   if (!SCENES.some(s => s.id === config.scene) || !CHARACTERS.some(c => c.id === config.character) || !MODES.some(m => m.id === config.mode) || !['balanced', 'random'].includes(config.order)) throw new Error('游戏配置无效');
-  return { id: globalThis.crypto.randomUUID(), createdAt: now, config: { ...config, selected }, positions: Object.fromEntries(selected.map(id => [id, 0])), queue: [], lastDraw: null, current: null, phase: 'ready', events: [], undo: null, status: 'active', challenge: !!config.challenge, challengeDisabled: false, feedback: '' };
+  return { id: globalThis.crypto.randomUUID(), createdAt: now, config: { ...config, selected, order: 'balanced' }, positions: Object.fromEntries(selected.map(id => [id, 0])), queue: [], catchUpLast: false, lastDraw: null, current: null, phase: 'ready', events: [], undo: null, status: 'active', challenge: !!config.challenge, challengeDisabled: false, feedback: '' };
 }
 export function draw(game, rng = Math.random) {
   if (game.status !== 'active' || game.phase !== 'ready') return game;
   const remaining = game.config.selected.filter(id => game.positions[id] < game.config.distance);
   if (!remaining.length) return game;
   let queue = game.queue.filter(id => remaining.includes(id));
+  const lowest = Math.min(...remaining.map(id => game.positions[id]));
+  const highest = Math.max(...Object.values(game.positions));
+  const catchUp = highest - lowest >= 3 && !game.catchUpLast;
   let current;
-  if (game.config.order === 'random') current = remaining[Math.floor(rng() * remaining.length)];
-  else {
-    if (!queue.length) {
-      queue = shuffle(remaining, rng);
-      if (queue.length > 1 && queue[0] === game.lastDraw) [queue[0], queue[1]] = [queue[1], queue[0]];
-    }
+  if (catchUp) {
+    let candidates = remaining.filter(id => game.positions[id] === lowest);
+    if (candidates.length > 1) candidates = candidates.filter(id => id !== game.lastDraw);
+    current = candidates[Math.floor(rng() * candidates.length)];
+  } else {
+    if (!queue.length) queue = shuffle(remaining, rng);
+    if (queue.length > 1 && queue[0] === game.lastDraw) [queue[0], queue[1]] = [queue[1], queue[0]];
     [current, ...queue] = queue;
   }
-  return { ...game, queue, current, lastDraw: current, phase: 'reading', feedback: '' };
+  return { ...game, queue, catchUpLast: catchUp, current, lastDraw: current, phase: 'reading', feedback: '' };
 }
 export function grade(game, rating, now = Date.now()) {
   if (game.status !== 'active' || game.phase !== 'reading') return game;
   const rule = RATINGS.find(r => r.id === rating);
   if (!rule) return game;
-  const undo = { positions: { ...game.positions }, queue: [...game.queue], lastDraw: game.lastDraw, current: game.current, phase: game.phase, status: game.status, eventsLength: game.events.length };
+  const undo = { positions: { ...game.positions }, queue: [...game.queue], catchUpLast: !!game.catchUpLast, lastDraw: game.lastDraw, current: game.current, phase: game.phase, status: game.status, eventsLength: game.events.length };
   const from = game.positions[game.current];
   const step = rating === 'pending' && game.challenge ? -1 : rule.step;
   const to = Math.max(0, Math.min(game.config.distance, from + step));
@@ -68,6 +72,11 @@ export function loadStore(storage) {
   for (const game of store.games) {
     if (!game.config || !Array.isArray(game.config.selected) || !game.positions || !Array.isArray(game.events) || !Array.isArray(game.queue) || !['active', 'complete', 'abandoned'].includes(game.status)) throw new Error('进度不完整');
     for (const id of game.config.selected) if (!ITEM_MAP[id] || !Number.isInteger(game.positions[id]) || game.positions[id] < 0 || game.positions[id] > game.config.distance) throw new Error('进度不完整');
+  }
+  for (const game of store.games) {
+    game.config.order = 'balanced';
+    game.catchUpLast = !!game.catchUpLast;
+    if (game.undo) game.undo.catchUpLast = !!game.undo.catchUpLast;
   }
   return store;
 }

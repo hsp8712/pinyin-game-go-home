@@ -29,9 +29,11 @@ test('balanced round avoids immediately repeating the previous last item', () =>
   let g = game({ selected: ['b', 'p'] }); g = { ...g, lastDraw: 'b' };
   assert.equal(draw(g, () => .99).current, 'p');
 });
-test('ordinary random can repeat the same remaining item', () => {
-  let g = game({ order: 'random' }); g = draw(g, () => 0); assert.equal(g.current, 'b');
-  g = grade(g, 'pending'); assert.equal(draw(g, () => 0).current, 'b');
+test('legacy random config now uses balanced draws', () => {
+  let g = game({ order: 'random' }); const drawn = [];
+  assert.equal(g.config.order, 'balanced');
+  for (let i = 0; i < 4; i++) { g = draw(g, () => 0); drawn.push(g.current); g = grade(g, 'pending'); }
+  assert.equal(new Set(drawn).size, 4);
 });
 test('drawing while reading never changes the selected item', () => { const g = draw(game()); assert.equal(draw(g), g); });
 test('independent completion and self correction both advance two', () => {
@@ -49,9 +51,11 @@ test('end boundary clamps, completion occurs only once and prevents more scoring
   let g = answer(game({ selected: ['b'] })); g = answer(g); assert.equal(g.positions.b, 3); assert.equal(g.status, 'complete');
   assert.equal(draw(g), g); assert.equal(grade(g, 'independent'), g);
 });
-test('arrived items leave the draw pool', () => {
-  let g = game({ selected: ['b', 'p'], order: 'random' }); g = grade(draw(g, () => 0), 'independent'); g = grade(draw(g, () => 0), 'independent');
-  assert.equal(g.positions.b, 3); assert.equal(draw(g, () => 0).current, 'p'); assert.equal(g.status, 'active');
+test('arrived items leave the draw pool including an old queued entry', () => {
+  let g = game({ selected: ['b', 'p'] });
+  g = { ...g, positions: { b: 3, p: 0 }, queue: ['b', 'p'] };
+  for (let i = 0; i < 4; i++) { g = draw(g, () => 0); assert.equal(g.current, 'p'); g = grade(g, 'pending'); }
+  assert.equal(g.status, 'active');
 });
 test('duplicate score submission is ignored', () => { const g = answer(game()); assert.equal(grade(g, 'independent'), g); assert.equal(g.events.length, 1); });
 test('undo restores reading item, position, queue and event count after completion', () => {
@@ -94,4 +98,39 @@ test('history keeps one hundred historical sessions plus current active session'
   const active = game(); const games = Array.from({ length: 110 }, () => ({ ...game(), status: 'abandoned' }));
   const result = keepRecent({ ...emptyStore(), currentId: active.id, games: [active, ...games] });
   assert.equal(result.games.length, 101); assert.equal(result.games.at(-1).id, active.id); assert.equal(result.games[0].id, games[10].id);
+});
+
+test('catch-up starts at three spaces, chooses the lowest and preserves the normal queue', () => {
+  const base = { ...game({ distance: 10 }), positions: { b: 0, p: 1, m: 2, f: 2 }, queue: ['f', 'm', 'p', 'b'] };
+  assert.equal(draw(base, () => 0).current, 'f');
+  const lagging = { ...base, positions: { ...base.positions, f: 3 } };
+  const bonus = draw(lagging, () => 0);
+  assert.equal(bonus.current, 'b'); assert.equal(bonus.catchUpLast, true); assert.deepEqual(bonus.queue, lagging.queue);
+  const normal = draw(grade(bonus, 'pending'), () => 0);
+  assert.equal(normal.current, 'f'); assert.equal(normal.catchUpLast, false);
+  assert.equal(draw(grade(normal, 'pending'), () => 0).current, 'b');
+});
+test('tied catch-up candidates are random and avoid immediate repeat when possible', () => {
+  const base = { ...game({ distance: 10 }), positions: { b: 0, p: 0, m: 3, f: 4 } };
+  assert.equal(draw(base, () => 0).current, 'b');
+  assert.equal(draw(base, () => .99).current, 'p');
+  assert.equal(draw({ ...base, lastDraw: 'b' }, () => 0).current, 'p');
+});
+test('constant catch-up pressure cannot starve the regular queue', () => {
+  let g = { ...game({ distance: 10 }), positions: { b: 0, p: 4, m: 4, f: 4 }, queue: ['p', 'm', 'f', 'b'] };
+  const normal = [];
+  for (let i = 0; i < 8; i++) { g = draw(g, () => .5); if (!g.catchUpLast) normal.push(g.current); g = grade(g, 'pending'); }
+  assert.deepEqual(normal, ['p', 'm', 'f', 'b']);
+});
+test('undo and storage preserve catch-up scheduling; old saves acquire defaults', () => {
+  let g = { ...game({ distance: 10 }), positions: { b: 0, p: 4, m: 4, f: 4 } };
+  g = draw(g); const before = g; g = grade(g, 'assisted');
+  const restored = undoGrade(g); assert.equal(restored.catchUpLast, true); assert.deepEqual(restored.queue, before.queue);
+  const store = { ...emptyStore(), currentId: g.id, games: [g] };
+  const storage = { getItem: () => JSON.stringify(store) };
+  assert.equal(loadStore(storage).games[0].catchUpLast, true);
+  delete g.catchUpLast; delete g.undo.catchUpLast; g.config.order = 'random';
+  const migrated = loadStore(storage).games[0];
+  assert.equal(migrated.config.order, 'balanced'); assert.equal(migrated.catchUpLast, false); assert.equal(migrated.undo.catchUpLast, false);
+  assert.deepEqual(migrated.positions, g.positions); assert.deepEqual(migrated.events, g.events);
 });
